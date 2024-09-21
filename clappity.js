@@ -36,69 +36,169 @@ class Clappity {
         }
     }
 
+    /**
+     * @param {string} template
+     * @param {{[key: string]: any}} data
+     */
     renderTemplate(template, data) {
         this.log(`Processing template...`);
-    
-        // Extract sections
-        const sectionRegex = /\[\[section\s+(\w+)\]\]\s*\{([^]*?)\}/g;
-        let sections = {};
-        let match;
-        while ((match = sectionRegex.exec(template)) !== null) {
-            const sectionName = match[1];
-            const sectionContent = match[2].trim();
-            sections[sectionName] = sectionContent;
-        }
-    
-        // Remove sections from the template
-        template = template.replace(sectionRegex, '');
-    
-        // Replace variables
-        template = template.replace(/\[\[(\w+)\]\]/g, (match, p1) => {
-            const value = data[p1] !== undefined ? data[p1] : '';
-            this.log(`Replacing [[${p1}]] with "${value}"`);
-            return value;
-        });
-    
-        // Handle [[if]] conditionals
-        template = template.replace(/\[\[if\s+(\w+)\]\]\s*\{([^]*?)\}\s*\[\[\/if\]\]/g, (match, condition, block) => {
-            const conditionResult = !!data[condition.trim()];
-            this.log(`Conditional evaluated: ${condition.trim()} = ${conditionResult}`);
-            return conditionResult ? block.trim() : '';
-        });
-    
-        // Handle negated [[if]] conditionals
-        template = template.replace(/\[\[if\s+!\s*(\w+)\]\]\s*\{([^]*?)\}\s*\[\[\/if\]\]/g, (match, condition, block) => {
-            const conditionResult = !data[condition.trim()];
-            this.log(`Negated conditional evaluated: !${condition.trim()} = ${conditionResult}`);
-            return conditionResult ? block.trim() : '';
-        });
-    
-        // Handle [[for item in itemList]] loops
-        template = template.replace(/\[\[for\s+(\w+)\s+in\s+(\w+)\]\]\s*\{([^]*?)\}\s*\[\[\/for\]\]/g, (match, item, arrayName, block) => {
-            const items = data[arrayName];
-            if (Array.isArray(items)) {
-                this.log(`Looping through array: ${arrayName}`);
-                return items.map(i => {
-                    return block.replace(new RegExp(`\\[\\[\\s*${item}\\s*\\]\\]`, 'g'), i); // Replace [[item]] with current item
-                }).join('');
+
+        let output = '';
+
+        for (let i = 0; i < template.length; i++) {
+            // If not template block, continue
+            if (!(template[i] === '[' && template[i + 1] === '[')) {
+                output += template[i];
+                continue;
             }
-            this.log(`Array not found: ${arrayName}`);
-            return '';
-        });
-    
-        // Include sections in the template
-        Object.entries(sections).forEach(([name, content]) => {
-            template = template.replace(new RegExp(`\\[\\[section ${name}\\]\\]`, 'g'), content);
-        });
-    
+
+            // If template block found, move inside
+            for (i; template[i] === '[' || template[i] === ' '; i++) {}
+
+            /**
+             * @type {string}
+             * @description The type of template block it is
+             */
+            let templateType = '';
+            for (
+                i;
+                template[i] !== ' ' &&
+                template[i] !== '\n' &&
+                template[i] !== ']';
+                i++
+            ) {
+                templateType += template[i];
+            }
+
+            switch (templateType) {
+                case 'section': {
+                    // Move into section content block
+                    for (i; template[i] !== '{'; i++) {}
+                    i++; // Currently at the '{' character, need to move inside that block
+
+                    let sectionContent = '';
+                    let insideBlock = false;
+                    for (i; template[i] !== '}' || insideBlock; i++) {
+                        if (template[i] === '{') insideBlock = true;
+                        if (template[i] === '}') insideBlock = false;
+                        sectionContent += template[i];
+                    }
+                    i++; // Currently at the '}' character, need to move out of that block
+
+                    output += this.renderTemplate(sectionContent.trim(), data);
+                    break;
+                }
+
+                case 'if': {
+                    // Skip spaces
+                    for (i; template[i] === ' '; i++) {}
+
+                    let condition = '';
+                    for (i; template[i] !== ']'; i++) {
+                        condition += template[i];
+                    }
+                    condition = condition.trim();
+
+                    // Move into if content block
+                    for (i; template[i] !== '{'; i++) {}
+                    i++; // Currently at the '{' character, need to move inside that block
+
+                    let ifContent = '';
+                    for (i; template[i] !== '}'; i++) {
+                        ifContent += template[i];
+                    }
+                    i++; // Currently at the '}' character, need to move out of that block
+
+                    /** @type {boolean} */
+                    let conditionalResult;
+                    if (condition.startsWith('!')) {
+                        // Negated condition
+                        conditionalResult = !data[condition.slice(1)];
+                    } else {
+                        conditionalResult = !!data[condition];
+                    }
+
+                    if (conditionalResult) {
+                        output += this.renderTemplate(ifContent.trim(), data);
+                    }
+
+                    break;
+                }
+
+                case 'for': {
+                    // Skip spaces
+                    for (i; template[i] === ' '; i++) {}
+
+                    // Read value used in each iteration of loop
+                    let value = '';
+                    for (i; template[i] !== ' '; i++) {
+                        value += template[i];
+                    }
+
+                    // Skip spaces
+                    for (i; template[i] === ' '; i++) {}
+                    // Skip 'in'
+                    i += 2;
+                    // Skip spaces
+                    for (i; template[i] === ' '; i++) {}
+
+                    var listName = '';
+                    for (i; template[i] !== ']'; i++) {
+                        listName += template[i];
+                    }
+
+                    listName = listName.trim();
+
+                    // Move to content block
+                    for (i; template[i] !== '{'; i++) {}
+                    i++; // Currently at the '{' character, need to move inside that block
+
+                    let forContent = '';
+                    for (i; template[i] !== '}'; i++) {
+                        forContent += template[i];
+                    }
+                    i++; // Currently at the '}' character, need to move out of that block
+
+                    /** @type {any[]} */
+                    const items = data[listName];
+
+                    // If array doesn't exist, exit without rendering the for loop
+                    if (!Array.isArray(items)) {
+                        this.log(`Array not found: ${listName}`);
+                        break;
+                    }
+
+                    for (const item of items) {
+                        output += this.renderTemplate(
+                            forContent.replaceAll(
+                                new RegExp(`\\[\\[\\s*${value}\\s*\\]\\]`, 'g'),
+                                item,
+                            ),
+                            data,
+                        );
+                    }
+
+                    break;
+                }
+
+                default: {
+                    // Move out of variable block
+                    i++;
+
+                    output += data[templateType.trim()]
+                        ? data[templateType.trim()].toString()
+                        : '';
+                }
+            }
+        }
+
         this.log(`Template rendered successfully.`);
-        return template;
+        return output;
     }
-    
 
     parseBody(req, callback) {
         let body = '';
-        req.on('data', chunk => {
+        req.on('data', (chunk) => {
             body += chunk.toString();
         });
         req.on('end', () => {
@@ -122,7 +222,7 @@ class Clappity {
             if (route && route[method]) {
                 const handler = route[method];
                 if (method === 'POST') {
-                    this.parseBody(req, body => {
+                    this.parseBody(req, (body) => {
                         req.body = body;
                         handler(req, res);
                     });
@@ -132,7 +232,7 @@ class Clappity {
             } else {
                 this.log(`404 Not Found: [${method}] ${url}`);
                 res.writeHead(404, { 'Content-Type': 'text/html' });
-                res.end("<h1>404 Not Found</h1>");
+                res.end('<h1>404 Not Found</h1>');
             }
         });
 
